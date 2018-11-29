@@ -1,10 +1,12 @@
 # reference used : https://itnext.io/refine-your-sparse-pysc2-agent-a3feb189bc68
 
+import random
 import os
 
 import numpy as np
 import pandas as pd
 from sklearn.metrics import pairwise_distances_argmin_min
+from scipy.spatial import distance
 from sklearn.preprocessing import normalize
 
 from pysc2.agents import base_agent
@@ -17,7 +19,7 @@ STEP_DIST = 3
 DATA_FILE = 'defeat_roaches_agent_data'
 
 ACTION_DO_NOTHING = 'nope'
-ACTION_RETREAT = 'retreat_5'
+ACTION_RETREAT = 'retreat_1'
 ACTION_ATTACK = 'attack'
 
 
@@ -94,7 +96,7 @@ class DefeatRoachesAgent(base_agent.BaseAgent):
         self.roaches_number = 0
 
         self.attack_cooldown = None
-        self.action_to_do = None
+        self.score = 0
         # self.failed_action = False
 
         if os.path.isfile(DATA_FILE + '.gz'):
@@ -115,8 +117,7 @@ class DefeatRoachesAgent(base_agent.BaseAgent):
 
     def init_values(self):
         self.attack_cooldown = None
-
-        self.action_to_do = None
+        self.score = 0
         # self.failed_action = False
 
     @staticmethod
@@ -138,89 +139,84 @@ class DefeatRoachesAgent(base_agent.BaseAgent):
         return smart_action, dist
 
     def step(self, obs):
+        if obs.first():
+            return actions.FUNCTIONS.select_army("select")
+
         if self.attack_cooldown is not None:
             self.attack_cooldown += 1
-
-        if self.action_to_do is not None:
-            return self.play_action(obs)
 
         roaches = [(unit.x, unit.y) for unit in self.get_units_by_type(obs, units.Zerg.Roach)]
         marines = [(unit.x, unit.y) for unit in self.get_units_by_type(obs, units.Terran.Marine)]
 
         # reward = self.get_reward(len(roaches), len(marines))
-        reward = obs.reward
+        reward = self.get_reward(obs.reward)
+        self.score += reward
+        if obs.last():
+            print("SCORE : ", self.score)
 
         if not roaches or not marines:
             self.attack_cooldown = None
             dist = 84 if not roaches else 0
             current_state = [dist, self.attack_cooldown]
-            self.qlearn.learn(str(self.previous_state), self.previous_action, reward, 'terminal' if obs.last() else str(current_state))
+            self.qlearn.learn(str(self.previous_state), self.previous_action, reward,
+                              'terminal' if obs.last() else str(current_state))
             self.previous_state = current_state
             self.previous_action = 0
             return actions.FUNCTIONS.no_op()
 
         (min_dist_indexes, min_dists) = pairwise_distances_argmin_min(marines, roaches)
         min_index = np.argmin(min_dists)
-        min_marine, min_roach = marines[min_index], roaches[min_dist_indexes[min_index]]
-        min_dist = round(min_dists[min_index], 2)
+        marine, roach = marines[min_index], roaches[min_dist_indexes[min_index]]
+        dist = round(min_dists[min_index], 1)
 
-        current_state = [min_dist, self.attack_cooldown]
+        # marine, roach = np.mean(marines, axis=0), np.mean(roaches, axis=0)
+        # dist = round(distance.pdist((marine, roach))[0], 2)
+
+        current_state = [dist, self.attack_cooldown]
         if self.previous_action is not None:
-            self.qlearn.learn(str(self.previous_state), self.previous_action, reward, 'terminal' if obs.last() else str(current_state))
+            self.qlearn.learn(str(self.previous_state), self.previous_action, reward,
+                              'terminal' if obs.last() else str(current_state))
 
-        direction = normalize(np.subtract(min_marine, min_roach).reshape(1, -1)).ravel()
-        # excluded_actions = []
-        # for dist_i in range(MIN_DIST, MAX_DIST):
-        #     potential_new_pos = np.add(min_marine, int(dist) * direction)
-        #     if any(potential_new_pos >= 84) or any(potential_new_pos <= 0):
-        #         excluded_actions = range(dist_i + 2, MAX_DIST + 3)  # account for ACTION_DO_NOTHING and ACTION_ATTACK
-        #         break
+        direction = normalize(np.subtract(marine, roach).reshape(1, -1)).ravel()
 
         action_id = self.qlearn.choose_action(str(current_state))
-        print('current state : ', current_state)
-        print('action choosen : ', self.smart_actions[action_id])
+        # print('current state : ', current_state)
+        # print('action choosen : ', self.smart_actions[action_id])
         self.previous_state = current_state
         self.previous_action = action_id
-        return self.use_action(action_id, min_roach, min_marine, direction)
+        return self.use_action(obs, action_id, roach, marine, direction)
 
-    def use_action(self, action_index, min_roach, min_marine, direction):
+    def use_action(self, obs, action_index, roach, marine, direction):
         action, dist = self.split_action(action_index)
         if action == ACTION_ATTACK:
-            self.action_to_do = (actions.FUNCTIONS.Attack_screen, ["now", min_roach])
-            self.attack_cooldown = -1
-        elif action == ACTION_RETREAT:
-            self.action_to_do = (
-                actions.FUNCTIONS.Move_screen, ["now", self.get_coord_in_dir(min_marine, direction, dist)])
-        else:
-            return actions.FUNCTIONS.no_op()
-
-        return actions.FUNCTIONS.select_army("select")
-
-    def play_action(self, obs):
-        action, args = self.action_to_do
-        self.action_to_do = None
-        if not self.can_do(obs, action.id):
-            # self.failed_action = True
-            print("FAILED")
-            return actions.FUNCTIONS.no_op()
-        return action(*args)
-
-    # def get_reward(self, n_roaches, n_marines):
-    #     reward = 0
-    #     if self.failed_action:
-    #         self.failed_action = False
-    #         reward -= 1
-    #     roaches_killed = self.roaches_number - n_roaches
-    #     if roaches_killed > 0:
-    #         reward += roaches_killed * 2
-    #     # roaches regularly appear so don't use appearing roaches to calculate reward, only killed ones
-    #     self.roaches_number = n_roaches
-    #     reward += (n_marines - self.marines_number) * 2
-    #     return reward
+            if self.can_do(obs, actions.FUNCTIONS.Attack_screen.id):
+                self.attack_cooldown = 0
+                return actions.FUNCTIONS.Attack_screen("now", roach)
+        elif action == ACTION_RETREAT and self.can_do(obs, actions.FUNCTIONS.Move_screen.id):
+                return actions.FUNCTIONS.Move_screen("now", self.get_coord_in_dir(marine, direction, dist))
+        return actions.FUNCTIONS.no_op()
 
     @staticmethod
-    def get_coord_in_dir(min_marine, direction, dist):
-        coord =  np.add(min_marine, int(dist) * direction)
+    def get_coord_in_dir(marine, direction, dist, recursive=True):
+        coord = np.add(marine, int(dist) * direction)
         coord = np.minimum(coord, [0, 0])
         coord = np.maximum(coord, [83, 83])
+        if recursive and DefeatRoachesAgent.stuck_in_corner(np.array(coord)):
+            random_index = random.getrandbits(1)
+            direction[random_index] = -1 if direction[random_index] > 0 else 1
+            direction[int(not random_index)] = 0
+            return DefeatRoachesAgent.get_coord_in_dir(marine, direction, dist, False)
         return coord
+
+    @staticmethod
+    def stuck_in_corner(coord):
+        return all(coord == 0) or all(coord == 83) or (any(coord == 0) and any(coord == 83))
+
+    @staticmethod
+    def get_reward(reward):
+        if reward < 0:
+            return reward * 5
+        r = reward % 10
+        if r > 0:
+            return (reward - r + 10) - (10 - r) * 5
+        return reward
