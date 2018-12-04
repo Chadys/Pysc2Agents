@@ -8,6 +8,7 @@ import pandas as pd
 from sklearn.metrics import pairwise_distances_argmin_min
 from scipy.spatial import distance
 from sklearn.preprocessing import normalize
+import matplotlib.pyplot as plt
 
 from pysc2.agents import base_agent
 from pysc2.lib import actions, units
@@ -19,9 +20,23 @@ STEP_DIST = 3
 DATA_FILE = 'defeat_roaches_agent_data'
 
 ACTION_DO_NOTHING = 'nope'
-ACTION_RETREAT = 'retreat_1'
+ACTION_RETREAT = 'retreat'
 ACTION_ATTACK = 'attack'
+MARINE_VALUE = 3
 
+xdata = []
+ydata = []
+
+fig = plt.figure()
+plt.xlabel('Episode')
+plt.ylabel('Score')
+fig.show()
+
+def update_graph(new_x, new_y):
+    xdata.append(new_x)
+    ydata.append(new_y)
+    plt.plot(xdata, ydata, 'r-')
+    plt.pause(.05)
 
 # Stolen from https://github.com/MorvanZhou/Reinforcement-learning-with-tensorflow
 class QLearningTable:
@@ -82,7 +97,7 @@ class DefeatRoachesAgent(base_agent.BaseAgent):
         self.smart_actions = [
             ACTION_DO_NOTHING,
             ACTION_ATTACK,
-            ACTION_RETREAT
+            ACTION_RETREAT + '_3'
         ]
 
         # for dist_i in range(MIN_DIST, MAX_DIST, STEP_DIST):
@@ -97,7 +112,7 @@ class DefeatRoachesAgent(base_agent.BaseAgent):
 
         self.attack_cooldown = None
         self.score = 0
-        # self.failed_action = False
+        self.saved_direction = None
 
         if os.path.isfile(DATA_FILE + '.gz'):
             self.qlearn.q_table = pd.read_pickle(DATA_FILE + '.gz', compression='gzip')
@@ -112,13 +127,14 @@ class DefeatRoachesAgent(base_agent.BaseAgent):
 
     def reset(self):
         super().reset()
+        update_graph(self.episodes, self.score)
         self.init_values()
         self.qlearn.q_table.to_pickle(DATA_FILE + '.gz', 'gzip')
 
     def init_values(self):
         self.attack_cooldown = None
         self.score = 0
-        # self.failed_action = False
+        self.saved_direction = None
 
     @staticmethod
     def get_units_by_type(obs, unit_type):
@@ -133,8 +149,8 @@ class DefeatRoachesAgent(base_agent.BaseAgent):
         smart_action = self.smart_actions[action_id]
 
         dist = 0
-        # if '_' in smart_action:
-        #     smart_action, dist = smart_action.split('_')
+        if '_' in smart_action:
+            smart_action, dist = smart_action.split('_')
 
         return smart_action, dist
 
@@ -193,19 +209,24 @@ class DefeatRoachesAgent(base_agent.BaseAgent):
                 self.attack_cooldown = 0
                 return actions.FUNCTIONS.Attack_screen("now", roach)
         elif action == ACTION_RETREAT and self.can_do(obs, actions.FUNCTIONS.Move_screen.id):
-                return actions.FUNCTIONS.Move_screen("now", self.get_coord_in_dir(marine, direction, dist))
+            return actions.FUNCTIONS.Move_screen("now", self.get_coord_in_dir(marine, direction, dist))
         return actions.FUNCTIONS.no_op()
 
-    @staticmethod
-    def get_coord_in_dir(marine, direction, dist, recursive=True):
+    def get_coord_in_dir(self, marine, direction, dist):
+        if self.saved_direction is not None:
+            direction = self.saved_direction
         coord = np.add(marine, int(dist) * direction)
-        coord = np.minimum(coord, [0, 0])
-        coord = np.maximum(coord, [83, 83])
-        if recursive and DefeatRoachesAgent.stuck_in_corner(np.array(coord)):
+        coord = np.maximum(coord, [0, 0])
+        coord = np.minimum(coord, [83, 83])
+        if DefeatRoachesAgent.stuck_in_corner(np.array(coord)):
+            if self.saved_direction is not None:
+                self.saved_direction = None
+                print("saved coord", coord)
+                return coord
             random_index = random.getrandbits(1)
-            direction[random_index] = -1 if direction[random_index] > 0 else 1
-            direction[int(not random_index)] = 0
-            return DefeatRoachesAgent.get_coord_in_dir(marine, direction, dist, False)
+            self.saved_direction = np.array([0, 0])
+            self.saved_direction[random_index] = -1 if direction[random_index] > 0 else 1
+            return self.get_coord_in_dir(marine, direction, dist)
         return coord
 
     @staticmethod
@@ -215,8 +236,8 @@ class DefeatRoachesAgent(base_agent.BaseAgent):
     @staticmethod
     def get_reward(reward):
         if reward < 0:
-            return reward * 5
+            return reward * MARINE_VALUE
         r = reward % 10
         if r > 0:
-            return (reward - r + 10) - (10 - r) * 5
+            return (reward - r + 10) - (10 - r) * MARINE_VALUE
         return reward
