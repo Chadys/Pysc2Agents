@@ -22,7 +22,7 @@ DATA_FILE = 'defeat_roaches_agent_data'
 ACTION_DO_NOTHING = 'nope'
 ACTION_RETREAT = 'retreat'
 ACTION_ATTACK = 'attack'
-MARINE_VALUE = 3
+MARINE_VALUE = 5
 
 xdata = []
 ydata = []
@@ -32,11 +32,13 @@ plt.xlabel('Episode')
 plt.ylabel('Score')
 fig.show()
 
+
 def update_graph(new_x, new_y):
     xdata.append(new_x)
     ydata.append(new_y)
     plt.plot(xdata, ydata, 'r-')
     plt.pause(.05)
+
 
 # Stolen from https://github.com/MorvanZhou/Reinforcement-learning-with-tensorflow
 class QLearningTable:
