@@ -7,8 +7,8 @@ def main(file_path):
     formats = ['r-', 'b-', 'g-']
     legends = ['% Loss', '% Draws', '% Win']
 
-    plt.xlabel('Episode')
     fig, ax = plt.subplots()
+    ax.set_xlabel('Episode')
 
     with open(file_path, 'r') as f:
         plays = f.read()
@@ -19,8 +19,9 @@ def main(file_path):
                     d.append(0)
             data[reward][-1] += 1
     for y, f, legend in zip(data, formats, legends):
-        ax.plot(range(100, (len(y)*100)+100, 100), y, f, legend)
-    plt.plot(data[0], 'r-', data[1], 'b-', data[2], 'g-')
+        ax.plot(range(100, (len(y)*100)+100, 100), y, f, label=legend)
+
+    ax.legend(loc='upper right', shadow=True, fontsize='x-small')
     plt.show()
 
 
