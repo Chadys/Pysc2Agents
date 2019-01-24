@@ -424,8 +424,7 @@ class SparseZergAgent(base_agent.BaseAgent):
             return None
         queen = self.get_units_by_type(obs, units.Zerg.Queen)
         if len(queen) > 0:
-            queen = queen[0]
-            if queen.energy >= 25 and current_state.num_larvae < 17:
+            if queen[0].energy >= 25 and current_state.num_larvae < 17:
                 return Action.SPAWN_LARVA
         if not self.upgrade_zergling:
             if obs.observation.player.minerals >= 100 and obs.observation.player.vespene >= 100:
@@ -436,7 +435,9 @@ class SparseZergAgent(base_agent.BaseAgent):
             return None
         # extractor = [e for e in self.get_units_by_type(obs, units.Zerg.Extractor) if e.assigned_harvesters < 3]
         # if len(extractor) > 0 and obs.observation.player.food_workers > 0:
-        if self.harvester_gaz < 6 and obs.observation.player.food_workers > 0:
+        if obs.observation.player.food_workers > 0 and \
+                (self.harvester_gaz < 6 or
+                 obs.observation.player.food_workers - obs.observation.player.idle_worker_count < 6):
             return Action.HARVEST_GAZ
         if not current_state.num_roach_warren:
             if obs.observation.player.minerals >= 150 and obs.observation.player.food_workers > 0:
@@ -468,8 +469,12 @@ class SparseZergAgent(base_agent.BaseAgent):
             return actions.FUNCTIONS.no_op()
 
         if self.move_number == 0:
+            # ensure camera is still looking at base
+            if not obs.observation.feature_minimap.camera.item((int(self.starting_cam[0]), int(self.starting_cam[1]))):
+                return actions.FUNCTIONS.move_camera(self.starting_cam)
+
             current_state = self.get_current_state(obs)
-            print('state : {}'.format(current_state))
+            # print('state : {}'.format(current_state))
 
             if self.previous_action is not None and not self.hardcoded_action:
                 self.qlearn.learn(str(self.previous_state), self.previous_action, 0, str(current_state))
@@ -490,7 +495,7 @@ class SparseZergAgent(base_agent.BaseAgent):
         elif self.move_number == 1:
             action = self.get_second_action(obs)
 
-        print('chosen action : {}'.format(action))
+        # print('chosen action : {}'.format(action))
         return action
 
     @staticmethod
@@ -526,8 +531,9 @@ class SparseZergAgent(base_agent.BaseAgent):
             if self.can_do(obs, actions.FUNCTIONS.select_idle_worker.id):
                 return actions.FUNCTIONS.select_idle_worker(actions.SelectWorker.select.name)
             drones = self.get_units_by_type(obs, units.Zerg.Drone)
-            drone = random.choice(drones)
-            return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name, self.clip_coordinate_values(drone))
+            if len(drones) > 0:
+                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name,
+                                                      self.clip_coordinate_values(random.choice(drones)))
         elif smart_action == Action.BUILD_LAIR.name or smart_action == Action.TRAIN_QUEEN.name:
             return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name, self.base_coord)
         elif smart_action == Action.UPGRADE_ZERGLINGS.name:
@@ -601,10 +607,13 @@ class SparseZergAgent(base_agent.BaseAgent):
             if self.can_do(obs, actions.FUNCTIONS.Harvest_Gather_Drone_screen.id):
                 # extractor = [e for e in self.get_units_by_type(obs, units.Zerg.Extractor)
                 #              if e.assigned_harvesters < 3][0]
-                extractor = self.get_units_by_type(obs, units.Zerg.Extractor)[self.harvester_gaz % 2]
-                self.harvester_gaz += 1
-                return actions.FUNCTIONS.Harvest_Gather_Drone_screen(actions.Queued.now.name,
-                                                                     self.clip_coordinate_values(extractor))
+                extractors = self.get_units_by_type(obs, units.Zerg.Extractor)
+                index = self.harvester_gaz % 2
+                if len(extractors) > index:
+                    extractor = extractors[index]
+                    self.harvester_gaz += 1
+                    return actions.FUNCTIONS.Harvest_Gather_Drone_screen(actions.Queued.now.name,
+                                                                         self.clip_coordinate_values(extractor))
 
         elif smart_action == Action.BUILD_HATCHERY.name:
             if self.can_do(obs, actions.FUNCTIONS.Build_Hatchery_screen.id):
@@ -690,7 +699,7 @@ def main(_):
                                 use_unit_counts=True),
                             step_mul=16,
                             game_steps_per_episode=0,
-                            visualize=True) as env:
+                            visualize=False) as env:
             run_loop.run_loop([agent], env)
 
     except KeyboardInterrupt:
@@ -701,7 +710,7 @@ def enable_remote_debug():
     import sys
     sys.path.append("pycharm-debug-py3k.egg")
     import pydevd
-    pydevd.settrace('10.0.0.12', port=51234, stdoutToServer=True, stderrToServer=True, suspend=False)
+    pydevd.settrace('192.168.3.30', port=51234, stdoutToServer=True, stderrToServer=True, suspend=False)
 
 
 if __name__ == "__main__":
