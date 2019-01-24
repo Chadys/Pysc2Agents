@@ -23,10 +23,11 @@ from pysc2.env import sc2_env, run_loop
 # Larva x3
 # Drone x12
 
-MINIMAP_SIZE = 64
-SCREEN_SIZE = 84
 
-DATA_FILE = 'simple_zerg_agent_data'
+class Constants:
+    MINIMAP_SIZE = 64
+    SCREEN_SIZE = 84
+    DATA_FILE = 'simple_zerg_agent_data'
 
 
 class State(enum.IntEnum):
@@ -91,8 +92,8 @@ class PatrolState(enum.Enum):
 smart_actions = [Action.DO_NOTHING.name, Action.TRAIN_DRONE.name, Action.TRAIN_ZERGLING.name,
                  Action.TRAIN_ROACH.name, Action.TRAIN_OVERLORD.name]
 
-for mm_x in range(MINIMAP_SIZE // 4, MINIMAP_SIZE, MINIMAP_SIZE // 2):
-    for mm_y in range(MINIMAP_SIZE // 4, MINIMAP_SIZE, MINIMAP_SIZE // 2):
+for mm_x in range(Constants.MINIMAP_SIZE // 4, Constants.MINIMAP_SIZE, Constants.MINIMAP_SIZE // 2):
+    for mm_y in range(Constants.MINIMAP_SIZE // 4, Constants.MINIMAP_SIZE, Constants.MINIMAP_SIZE // 2):
         smart_actions.append('{},{},{}'.format(Action.ATTACK.name, mm_x, mm_y))
 
 
@@ -159,7 +160,7 @@ class QLearningTable:
 
 
 class SparseZergAgent(base_agent.BaseAgent):
-    center = MINIMAP_SIZE / 2
+    center = Constants.MINIMAP_SIZE / 2
     top_left_pos = (12, 16)
     bot_right_pos = (49, 49)
 
@@ -172,18 +173,18 @@ class SparseZergAgent(base_agent.BaseAgent):
 
         self.init_values()
 
-        open(DATA_FILE + '.stat', 'a').close()
-        if os.path.isfile(DATA_FILE + '.gz'):
-            self.qlearn.q_table = pd.read_pickle(DATA_FILE + '.gz', compression='gzip')
+        open(Constants.DATA_FILE + '.stat', 'a').close()
+        if os.path.isfile(Constants.DATA_FILE + '.gz'):
+            self.qlearn.q_table = pd.read_pickle(Constants.DATA_FILE + '.gz', compression='gzip')
 
     def reset(self):
         super().reset()
 
-        with open(DATA_FILE + '.stat', 'a') as f:
-            f.write(str(self.score+1))
+        with open(Constants.DATA_FILE + '.stat', 'a') as f:
+            f.write(str(self.score + 1))
         self.init_values()
 
-        self.qlearn.q_table.to_pickle(DATA_FILE + '.gz', 'gzip')
+        self.qlearn.q_table.to_pickle(Constants.DATA_FILE + '.gz', 'gzip')
 
     def init_values(self):
         self.move_number = 0
@@ -197,22 +198,23 @@ class SparseZergAgent(base_agent.BaseAgent):
         self.base_coord = [0, 0]
         self.base_coord_radius = 0
         self.harvester_gaz = 0
-        minimap_step = MINIMAP_SIZE // 4
-        values = [minimap_step, minimap_step*2, minimap_step*3]
+        minimap_step = Constants.MINIMAP_SIZE // 4
+        values = [minimap_step, minimap_step * 2, minimap_step * 3]
         self.scouting_areas = [(values[0], values[0]),
                                (values[2], values[0]),
                                (values[1], values[1]),
                                (values[0], values[2]),
                                (values[2], values[2])]
-        self.starting_cam = [MINIMAP_SIZE]*2
+        self.starting_cam = [Constants.MINIMAP_SIZE] * 2
         self.score = 0
 
     def transform_distance(self, x, x_distance, y, y_distance):
-        return [x - x_distance, y - y_distance] if not self.base_top_left else [x + x_distance, y + y_distance]
+        coords = [x - x_distance, y - y_distance] if not self.base_top_left else [x + x_distance, y + y_distance]
+        return self.clip_coordinate_values(coords)
 
     def transform_location(self, x, y):
         if not self.base_top_left:
-            return [MINIMAP_SIZE - x, MINIMAP_SIZE - y]
+            return [Constants.MINIMAP_SIZE - x, Constants.MINIMAP_SIZE - y]
 
         return [x, y]
 
@@ -224,7 +226,7 @@ class SparseZergAgent(base_agent.BaseAgent):
         if ',' in smart_action:
             smart_action, x, y = smart_action.split(',')
 
-        return smart_action, x, y
+        return smart_action, int(x), int(y)
 
     def init_starting_var(self, obs):
         player_y, player_x = (obs.observation.feature_minimap.player_relative ==
@@ -245,7 +247,6 @@ class SparseZergAgent(base_agent.BaseAgent):
             self.base_coord_radius = hatchery[0].radius
         camera_y, camera_x = obs.observation.feature_minimap.camera.nonzero()
         self.starting_cam = (camera_x.mean(), camera_y.mean())
-
 
     @staticmethod
     def get_units_by_type(obs, unit_type):
@@ -404,7 +405,8 @@ class SparseZergAgent(base_agent.BaseAgent):
                 return Action.STOP_SCOUTING
 
         if current_state.idle_worker_count:
-            idle_workers_on_screen = len([d for d in self.get_units_by_type(obs, units.Zerg.Drone) if d.order_length == 0])
+            idle_workers_on_screen = len(
+                [d for d in self.get_units_by_type(obs, units.Zerg.Drone) if d.order_length == 0])
             if 0 > current_state.idle_worker_count - idle_workers_on_screen < 4:
                 return Action.SCOUT_AREA
 
@@ -479,7 +481,8 @@ class SparseZergAgent(base_agent.BaseAgent):
             if self.previous_action is not None and not self.hardcoded_action:
                 self.qlearn.learn(str(self.previous_state), self.previous_action, 0, str(current_state))
 
-            rl_action = self.get_hardcoded_action(obs, current_state)
+            # prevent hardcoded action from happening too often
+            rl_action = None if self.hardcoded_action else self.get_hardcoded_action(obs, current_state)
             if rl_action is not None:
                 rl_action = rl_action
                 self.hardcoded_action = True
@@ -506,13 +509,19 @@ class SparseZergAgent(base_agent.BaseAgent):
     def clip_coordinate_values(unit):
         # because of https://github.com/deepmind/pysc2/issues/248
         # need to ensure values are in screen space
-        clip = lambda value : min(SCREEN_SIZE-1, max(0, value))
-        return [clip(unit.x), clip(unit.y)]
+        clip = lambda value: min(Constants.SCREEN_SIZE - 1, max(0, value))
+        return [clip(unit.x), clip(unit.y)] if hasattr(unit, 'x') else [clip(unit[0]), clip(unit[1])]
 
+    def add_offset(self, value):
+        offset = random.uniform(-1, 1)
+        return value + offset * self.base_coord_radius
 
     def get_first_action(self, obs):
         smart_action, x, y = self.parse_action(self.previous_action)
-        print('smart_action : {}'.format(smart_action))
+        # if x > 0:
+        #     print('smart_action : {} : {}, {}'.format(smart_action, x, y))
+        # else:
+        #     print('smart_action : {}'.format(smart_action))
         if smart_action == Action.DO_NOTHING.name:
             return actions.FUNCTIONS.no_op()
         self.move_number += 1
@@ -522,7 +531,8 @@ class SparseZergAgent(base_agent.BaseAgent):
             larvae = self.get_units_by_type(obs, units.Zerg.Larva)
             if len(larvae) > 0:
                 larva = random.choice(larvae)
-                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name, self.clip_coordinate_values(larva))
+                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name,
+                                                      self.clip_coordinate_values(larva))
         elif smart_action == Action.ATTACK.name:
             return actions.FUNCTIONS.select_army(actions.SelectAdd.select.name)
         elif smart_action == Action.BUILD_HATCHERY.name or smart_action == Action.BUILD_SPAWNING_POOL.name or \
@@ -540,22 +550,26 @@ class SparseZergAgent(base_agent.BaseAgent):
             s_pool = self.get_units_by_type(obs, units.Zerg.SpawningPool)
             if len(s_pool) > 0:
                 s_pool = s_pool[0]
-                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name, self.clip_coordinate_values(s_pool))
+                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name,
+                                                      self.clip_coordinate_values(s_pool))
         elif smart_action == Action.UPGRADE_ROACHES.name:
             r_warren = self.get_units_by_type(obs, units.Zerg.RoachWarren)
             if len(r_warren) > 0:
                 r_warren = r_warren[0]
-                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name, self.clip_coordinate_values(r_warren))
+                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name,
+                                                      self.clip_coordinate_values(r_warren))
         elif smart_action == Action.SPAWN_LARVA.name:
             queen = self.get_units_by_type(obs, units.Zerg.Queen)
             if len(queen) > 0:
                 queen = queen[0]
-                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name, self.clip_coordinate_values(queen))
+                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name,
+                                                      self.clip_coordinate_values(queen))
         elif smart_action == Action.SCOUT_ENEMY.name:
             overlord = self.get_units_by_type(obs, units.Zerg.Overlord)
             if len(overlord) > 0:
                 overlord = overlord[0]
-                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name, self.clip_coordinate_values(overlord))
+                return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name,
+                                                      self.clip_coordinate_values(overlord))
         elif smart_action == Action.IDENTIFY_ENEMY.name:
             return actions.FUNCTIONS.move_camera(self.attack_coordinates)
         elif smart_action == Action.STOP_SCOUTING.name:
@@ -567,7 +581,8 @@ class SparseZergAgent(base_agent.BaseAgent):
             if len(overlord) > 0:
                 overlord = overlord[0]
                 if not overlord.is_selected:
-                    return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name, self.clip_coordinate_values(overlord))
+                    return actions.FUNCTIONS.select_point(actions.SelectPointAct.select.name,
+                                                          self.clip_coordinate_values(overlord))
                 self.move_number = 0
                 return actions.FUNCTIONS.Stop_quick(actions.Queued.now.name)
         elif smart_action == Action.SCOUT_AREA.name:
@@ -598,11 +613,9 @@ class SparseZergAgent(base_agent.BaseAgent):
                 return actions.FUNCTIONS.Train_Queen_quick(actions.Queued.now.name)
         elif smart_action == Action.ATTACK.name:
             if self.can_do(obs, actions.FUNCTIONS.Attack_minimap.id):
-                x_offset = random.randint(-1, 1)
-                y_offset = random.randint(-1, 1)
                 return actions.FUNCTIONS.Attack_minimap(actions.Queued.now.name,
-                                                        self.transform_location(int(x) + x_offset * 8,
-                                                                                int(y) + y_offset * 8))
+                                                        self.transform_location(self.add_offset(x),
+                                                                                self.add_offset(y)))
         elif smart_action == Action.HARVEST_GAZ.name:
             if self.can_do(obs, actions.FUNCTIONS.Harvest_Gather_Drone_screen.id):
                 # extractor = [e for e in self.get_units_by_type(obs, units.Zerg.Extractor)
@@ -620,18 +633,20 @@ class SparseZergAgent(base_agent.BaseAgent):
                 return actions.FUNCTIONS.Build_Hatchery_screen(actions.Queued.now.name, self.base_coord)
         elif smart_action == Action.BUILD_SPAWNING_POOL.name:
             if self.can_do(obs, actions.FUNCTIONS.Build_SpawningPool_screen.id):
+                pos = self.base_coord_radius * 2.5
                 return actions.FUNCTIONS.Build_SpawningPool_screen(actions.Queued.now.name,
                                                                    self.transform_distance(self.base_coord[0],
-                                                                                           self.base_coord_radius*3,
+                                                                                           self.add_offset(pos),
                                                                                            self.base_coord[1],
-                                                                                           0))
+                                                                                           self.add_offset(0)))
         elif smart_action == Action.BUILD_ROACH_WARREN.name:
             if self.can_do(obs, actions.FUNCTIONS.Build_RoachWarren_screen.id):
+                pos = self.base_coord_radius * 2.5
                 return actions.FUNCTIONS.Build_RoachWarren_screen(actions.Queued.now.name,
                                                                   self.transform_distance(self.base_coord[0],
-                                                                                          0,
+                                                                                          self.add_offset(0),
                                                                                           self.base_coord[1],
-                                                                                          self.base_coord_radius*3))
+                                                                                          self.add_offset(pos)))
 
         elif smart_action == Action.BUILD_EXTRACTOR.name:
             if self.can_do(obs, actions.FUNCTIONS.Build_Extractor_screen.id):
@@ -668,8 +683,8 @@ class SparseZergAgent(base_agent.BaseAgent):
             if len(enemy_units) > 0:
                 self.patrol_state = PatrolState.RETURNING
                 enemy_unit_type = self.get_unit_type(enemy_units[0].unit_type)
-                self.enemy_race = race_dict[enemy_unit_type.__class__ if enemy_unit_type is not None \
-                                  else enemy_unit_type]
+                self.enemy_race = race_dict[enemy_unit_type.__class__ if enemy_unit_type is not None
+                                            else enemy_unit_type]
                 return actions.FUNCTIONS.move_camera(self.starting_cam)
         elif smart_action == Action.STOP_SCOUTING.name:
             if self.can_do(obs, actions.FUNCTIONS.Stop_quick.id):
@@ -692,7 +707,8 @@ def main(_):
                                      sc2_env.Bot(sc2_env.Race.random,
                                                  sc2_env.Difficulty.very_easy)],
                             agent_interface_format=features.AgentInterfaceFormat(
-                                feature_dimensions=features.Dimensions(screen=SCREEN_SIZE, minimap=MINIMAP_SIZE),
+                                feature_dimensions=features.Dimensions(screen=Constants.SCREEN_SIZE,
+                                                                       minimap=Constants.MINIMAP_SIZE),
                                 use_feature_units=True,
                                 hide_specific_actions=False,
                                 use_raw_units=True,
@@ -714,5 +730,5 @@ def enable_remote_debug():
 
 
 if __name__ == "__main__":
-    enable_remote_debug()
+    # enable_remote_debug()
     app.run(main)
