@@ -9,10 +9,15 @@ def main(file_path):
 
     fig, ax = plt.subplots()
     ax.set_xlabel('Episode')
+    ax.set_ylabel('Percentage')
 
     with open(file_path, 'r') as f:
         plays = f.read()
+        # get number of parties, rounded by 100
+        n_plays = len(plays) // 100 * 100
         for x, reward in enumerate(plays):
+            if x >= n_plays:
+                break
             reward = int(reward)
             if x % 100 == 0:
                 for d in data:
